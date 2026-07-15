@@ -1,0 +1,12 @@
+.DS_Store
+.env
+
+# Case study source materials — kept locally under their original names;
+# assignment.pdf (a copy) is committed instead, matching the reference
+# submission's convention.
+instructions.pdf
+instructions.md
+
+# Internal planning artifacts — not part of the submission.
+docs/
+DESIGN_LOG.md
