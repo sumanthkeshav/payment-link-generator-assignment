@@ -1,0 +1,1762 @@
+{
+  "name": "Payment Link Orchestrator",
+  "nodes": [
+    {
+      "id": "ed285f83-ad18-47e8-bafb-1c4e5053a09b",
+      "name": "Payment Request Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "payment-link",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ErtKfVkCfKbiSH1r",
+          "name": "Payment Webhook - Shared Secret"
+        }
+      }
+    },
+    {
+      "id": "3c74f122-a456-46bf-97c4-139376add351",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body = $input.first().json.body || {};\nconst nowSeconds = Math.floor(Date.now() / 1000);\nconst THREE_YEARS_SECONDS = 3 * 365 * 24 * 60 * 60;\nconst errors = [];\n\nfunction checkString(field, value, required, formatRegex) {\n  if (value === undefined || value === null || value === '') {\n    if (required) errors.push({ field, reason: 'missing' });\n    return;\n  }\n  if (typeof value !== 'string') {\n    errors.push({ field, reason: 'wrong_type' });\n    return;\n  }\n  if (formatRegex && !formatRegex.test(value)) {\n    errors.push({ field, reason: 'invalid_format' });\n  }\n}\n\nfunction checkNumber(field, value, required, extraCheck) {\n  if (value === undefined || value === null || value === '') {\n    if (required) errors.push({ field, reason: 'missing' });\n    return;\n  }\n  if (typeof value !== 'number' || Number.isNaN(value)) {\n    errors.push({ field, reason: 'wrong_type' });\n    return;\n  }\n  if (extraCheck) extraCheck(value);\n}\n\ncheckString('referenceId', body.referenceId, true);\ncheckNumber('paymentAmount', body.paymentAmount, true, (v) => {\n  if (v <= 0) errors.push({ field: 'paymentAmount', reason: 'must_be_positive' });\n});\ncheckString('currency', body.currency, true, /^[A-Z]{3}$/);\ncheckString('customerEmail', body.customerEmail, true, /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/);\ncheckString('invoiceNumber', body.invoiceNumber, true);\ncheckString('contactId', body.contactId, false);\ncheckString('customerName', body.customerName, false);\ncheckString('customerPhone', body.customerPhone, false, /^\\+?[0-9]{7,15}$/);\ncheckString('description', body.description, false);\n\nif (body.expireBy !== undefined && body.expireBy !== null && body.expireBy !== '') {\n  if (typeof body.expireBy !== 'number' || Number.isNaN(body.expireBy)) {\n    errors.push({ field: 'expireBy', reason: 'wrong_type' });\n  } else if (body.expireBy <= nowSeconds) {\n    errors.push({ field: 'expireBy', reason: 'in_past' });\n  } else if (body.expireBy > nowSeconds + THREE_YEARS_SECONDS) {\n    errors.push({ field: 'expireBy', reason: 'exceeds_max' });\n  }\n}\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors,\n    referenceId: body.referenceId,\n    contactId: body.contactId,\n    customerName: body.customerName,\n    customerPhone: body.customerPhone,\n    customerEmail: body.customerEmail,\n    invoiceNumber: body.invoiceNumber,\n    paymentAmount: body.paymentAmount,\n    currency: body.currency,\n    description: body.description,\n    expireBy: body.expireBy\n  }\n}];"
+      }
+    },
+    {
+      "id": "909bab64-aef2-4867-a3b3-3081df385ffb",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        560,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "beb8b931-992a-4523-a778-babfb1e519eb",
+      "name": "Format Validation Failure Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        400
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const v = $('Validate Input').first().json;\nreturn [{ json: {\n  referenceId: v.referenceId || 'unknown',\n  invoiceNumber: v.invoiceNumber,\n  contactId: v.contactId,\n  customerName: v.customerName,\n  customerEmail: v.customerEmail,\n  paymentAmount: v.paymentAmount,\n  currency: v.currency,\n  payment_link: '',\n  payment_id: '',\n  validation_status: 'validation_failed',\n  final_status: 'validation_failed',\n  created_at: new Date().toISOString(),\n  updated_at: new Date().toISOString(),\n  error_detail: v.errors.map(e => e.field + ': ' + e.reason).join('; ')\n} }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "39264653-9fbc-4fb8-a0b4-c2ac2b287920",
+      "name": "Log Validation Failure",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1120,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1im-MoZUhjl8lAPlUUOv10JxXi4a_HeXT83aQZqkCoyw"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h3cuuVouC8ifvPgx",
+          "name": "Google Auth"
+        }
+      }
+    },
+    {
+      "id": "a736f134-e5f9-4b3f-ac20-d37152cb33ea",
+      "name": "Respond Validation Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1968,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Build Validation Failed Response').first().json.response }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "a0d03883-941e-4ba5-ae00-9e2ab2510132",
+      "name": "Dedup Lookup",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        848,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1im-MoZUhjl8lAPlUUOv10JxXi4a_HeXT83aQZqkCoyw"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "referenceId",
+              "lookupValue": "={{ $('Validate Input').first().json.referenceId }}"
+            }
+          ]
+        },
+        "range": "A:N",
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h3cuuVouC8ifvPgx",
+          "name": "Google Auth"
+        }
+      }
+    },
+    {
+      "id": "f2a91c3e-7d4b-4e2a-9c5f-1b8e6a3d9f27",
+      "name": "Check Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all();\nconst row = rows[0] ? rows[0].json : {};\nif (!row || !row.referenceId) {\n  return [{ json: { isDuplicate: false } }];\n}\nconst protectedStatuses = ['update_confirmed', 'link_generated', 'update_unrecoverable'];\nreturn [{ json: {\n  isDuplicate: protectedStatuses.includes(row.final_status),\n  existingStatus: row.final_status,\n  existingPaymentLink: row.payment_link,\n  existingPaymentId: row.payment_id\n} }];"
+      }
+    },
+    {
+      "id": "1c327498-0f22-4e40-8f6f-9f9a1cc58652",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1408,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "df1bc5d3-c3be-4cd7-a7e5-a25f23b96b70",
+      "name": "Is Update Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1680,
+        -160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.existingStatus }}",
+              "rightValue": "update_confirmed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c2b04f78-90c1-49ab-9d53-101c2f4bc947",
+      "name": "Respond Duplicate Notified",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1952,
+        -256
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, referenceId: $('Validate Input').first().json.referenceId, status: 'Already processed', data: { payment_link: $('Check Duplicate').first().json.existingPaymentLink } } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "24d04c92-4fd5-4330-b11d-dd5b1e63675d",
+      "name": "Format Received Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        160
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const v = $('Validate Input').first().json;\nreturn [{ json: {\n  referenceId: v.referenceId,\n  invoiceNumber: v.invoiceNumber,\n  contactId: v.contactId,\n  customerName: v.customerName,\n  customerEmail: v.customerEmail,\n  paymentAmount: v.paymentAmount,\n  currency: v.currency,\n  payment_link: '',\n  payment_id: '',\n  validation_status: 'validation_passed',\n  final_status: 'received',\n  created_at: new Date().toISOString(),\n  updated_at: new Date().toISOString(),\n  error_detail: ''\n} }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "b5210bf3-0638-4a49-b9a0-f76971cd6c37",
+      "name": "Log Received Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1968,
+        160
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1im-MoZUhjl8lAPlUUOv10JxXi4a_HeXT83aQZqkCoyw"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "referenceId"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h3cuuVouC8ifvPgx",
+          "name": "Google Auth"
+        }
+      }
+    },
+    {
+      "id": "b5a69b32-8378-4b52-8bc5-274dcce71a1a",
+      "name": "Build U3 Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2448,
+        0
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const v = $('Validate Input').first().json;\nreturn [{ json: {\n  referenceId: v.referenceId,\n  paymentAmount: v.paymentAmount,\n  currency: v.currency,\n  description: v.description,\n  customerName: v.customerName,\n  customerPhone: v.customerPhone,\n  customerEmail: v.customerEmail,\n  expireBy: v.expireBy\n} }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c246faab-29e6-4446-9612-8c9c87b91ee5",
+      "name": "Call Generate Payment Link",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2736,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "VN7J2K9zwBm5Y8le"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e01b9ef8-5a19-4b09-b986-bfd9c2f27e6e",
+      "name": "Normalize U3 Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3008,
+        0
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nif (item.success === true) {\n  return [{ json: { success: true, payment_link: item.data.payment_link, ID: item.data.ID, referenceId: item.data.referenceId, expire_by: item.data.expire_by } }];\n}\nif (item.success === false) {\n  return [{ json: { success: false, message: (item.error && item.error.message) || 'Sub-workflow reported failure' } }];\n}\nreturn [{ json: { success: false, message: 'Sub-workflow contract violation: ' + ((item.error && item.error.message) || 'crashed or returned unexpected shape') } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "82a5e6ca-5b52-44c3-a334-8dad9d45d3ab",
+      "name": "U3 Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3296,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e72692be-0e37-4c41-8c5a-ac26752827c5",
+      "name": "Format Link Failed Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3568,
+        400
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\n  referenceId: $('Validate Input').first().json.referenceId,\n  link_generation_status: 'link_generation_unrecoverable',\n  final_status: 'link_generation_unrecoverable',\n  updated_at: new Date().toISOString(),\n  error_detail: $json.message\n} }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "2612a50f-0df7-44dc-aa2d-88de89c77201",
+      "name": "Update Row - Link Failed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3856,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1im-MoZUhjl8lAPlUUOv10JxXi4a_HeXT83aQZqkCoyw"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "referenceId"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h3cuuVouC8ifvPgx",
+          "name": "Google Auth"
+        }
+      }
+    },
+    {
+      "id": "b1e1e9fd-a60c-4b60-96aa-ba379855029e",
+      "name": "Call Notify Failure - Link Failed",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        4416,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "X1Mh5io0qqtqknM8"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "fe032120-394b-427c-98e6-229f1bd20fa4",
+      "name": "Respond Link Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        4688,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Build Link Failed Response').first().json.response }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "id": "64aff695-a2f0-457d-b2a2-366fd85e5571",
+      "name": "Format Link Generated Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3568,
+        0
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\n  referenceId: $('Validate Input').first().json.referenceId,\n  link_generation_status: 'link_generated',\n  final_status: 'link_generated',\n  payment_link: $json.payment_link,\n  payment_id: $json.ID,\n  expire_by: $json.expire_by,\n  updated_at: new Date().toISOString()\n} }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "2ea6f5be-464d-4f86-99c4-5f22d7383add",
+      "name": "Update Row - Link Generated",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3856,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1im-MoZUhjl8lAPlUUOv10JxXi4a_HeXT83aQZqkCoyw"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "referenceId"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h3cuuVouC8ifvPgx",
+          "name": "Google Auth"
+        }
+      }
+    },
+    {
+      "id": "5f180f24-3c83-4f8b-9f91-cc112949f6f7",
+      "name": "Build U4 Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4976,
+        0
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const v = $('Validate Input').first().json;\nif ($('Normalize U3 Result').isExecuted) {\n  const u3 = $('Normalize U3 Result').first().json;\n  return [{ json: { payment_link: u3.payment_link, ID: u3.ID, referenceId: u3.referenceId } }];\n}\nconst dup = $('Check Duplicate').first().json;\nreturn [{ json: { payment_link: dup.existingPaymentLink, ID: dup.existingPaymentId, referenceId: v.referenceId } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "e5d50a6f-fb44-40a3-86fb-dddcceb4d7b6",
+      "name": "Call Update Payment Record",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5280,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jPpuiI6JicKxhXuH"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "a88acc86-00c2-444a-abd3-899b46f8972c",
+      "name": "Normalize U4 Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5568,
+        0
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nif (item.success === true) {\n  return [{ json: { success: true, payment_link: item.data.payment_link, ID: item.data.ID, referenceId: item.data.referenceId } }];\n}\nif (item.success === false) {\n  return [{ json: { success: false, message: (item.error && item.error.message) || 'Sub-workflow reported failure' } }];\n}\nreturn [{ json: { success: false, message: 'Sub-workflow contract violation: ' + ((item.error && item.error.message) || 'crashed or returned unexpected shape') } }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "bc69aaa4-b0a4-4ad3-a4da-d2b6ff207287",
+      "name": "U4 Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5840,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "324b3e2c-fc55-457b-9691-79a7ada84824",
+      "name": "Format Update Unrecoverable Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6128,
+        400
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\n  referenceId: $('Validate Input').first().json.referenceId,\n  record_update_status: 'update_unrecoverable',\n  final_status: 'update_unrecoverable',\n  updated_at: new Date().toISOString(),\n  error_detail: $json.message\n} }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "72c8a813-a452-40fd-bae4-796d74579ac0",
+      "name": "Update Row - Update Unrecoverable",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        6400,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1im-MoZUhjl8lAPlUUOv10JxXi4a_HeXT83aQZqkCoyw"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "referenceId"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h3cuuVouC8ifvPgx",
+          "name": "Google Auth"
+        }
+      }
+    },
+    {
+      "id": "5f335427-1af1-4439-a026-51d9386d2ecc",
+      "name": "Call Notify Failure - Update Failed",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        6960,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "X1Mh5io0qqtqknM8"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "1ed9a095-ce8c-49ee-85d9-8c2b814f419e",
+      "name": "Respond Update Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        7184,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Build Update Failed Response').first().json.response }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "id": "8314911f-a89c-48e9-933c-0f9d1e628753",
+      "name": "Format Update Confirmed Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6128,
+        0
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: {\n  referenceId: $('Validate Input').first().json.referenceId,\n  record_update_status: 'update_confirmed',\n  final_status: 'update_confirmed',\n  updated_at: new Date().toISOString()\n} }];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "11bf2c8c-b6b9-4890-9894-099cd7355374",
+      "name": "Update Row - Update Confirmed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        6400,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1im-MoZUhjl8lAPlUUOv10JxXi4a_HeXT83aQZqkCoyw"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "referenceId"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "h3cuuVouC8ifvPgx",
+          "name": "Google Auth"
+        }
+      }
+    },
+    {
+      "id": "8488808c-e0f4-4893-bbf1-5cbd08532b18",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        6688,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, referenceId: $('Validate Input').first().json.referenceId, status: 'Payment link generated and record updated', data: { payment_link: $('Build U4 Input').first().json.payment_link } } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "0e5068f0-9bd8-4b58-b569-20e7d6bcbf70",
+      "name": "Respond Sheets Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1760,
+        912
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Build Sheets Error Response').first().json.response }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "c73d05e9-a0ac-4eb4-9407-7996b4dcef23",
+      "name": "Build Sheets Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        912
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const referenceId = $('Validate Input').first().json.referenceId || null;\n\nconst response = {\n  success: false,\n  referenceId,\n  status: 'Audit log unavailable',\n  data: {\n    stage: 'audit_log',\n    error: { code: 'INTERNAL_ERROR', category: 'internal_error', retryable: true, message: 'Audit log unavailable' }\n  }\n};\n\nconst message = ':rotating_light: *Audit Log Unavailable*\\n' +\n  '*Reference ID:* ' + (referenceId || 'unknown') + '\\n' +\n  '*Details:* Google Sheets write failed - audit trail unavailable for this request.';\n\nreturn [{ json: { response, message } }];"
+      }
+    },
+    {
+      "id": "4f2152da-944c-4d36-a096-1caa0d8a26c7",
+      "name": "Call Notify Failure - Sheets Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1488,
+        912
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "X1Mh5io0qqtqknM8"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "de0f26c1-fee2-4adf-ac84-cf3bb5d64a98",
+      "name": "Build Link Failed Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4128,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const errorMap = {\n  not_retryable: { code: 'GATEWAY_REJECTED', category: 'upstream_error', retryable: false, message: 'The payment gateway rejected the request. This will not succeed on retry; please review the submitted details.' },\n  malformed_response: { code: 'GATEWAY_CONTRACT_VIOLATION', category: 'upstream_error', retryable: false, message: 'The payment gateway returned an unexpected response. Please contact support.' },\n  retries_exhausted_connection: { code: 'GATEWAY_TIMEOUT', category: 'upstream_error', retryable: true, message: 'The payment gateway could not be reached after multiple attempts. Please try again shortly.' },\n  retries_exhausted_gateway: { code: 'GATEWAY_UNAVAILABLE', category: 'upstream_error', retryable: true, message: 'The payment gateway is currently unavailable after multiple attempts. Please try again shortly.' },\n  contract_violation: { code: 'SUBWORKFLOW_CONTRACT_VIOLATION', category: 'internal_error', retryable: false, message: 'An internal error occurred while processing this request. Please contact support.' }\n};\nconst u3 = $('Normalize U3 Result').first().json;\nconst mapped = errorMap[u3.reason] || { code: 'GATEWAY_ERROR', category: 'upstream_error', retryable: false, message: 'The payment gateway returned an error.' };\nconst referenceId = $('Validate Input').first().json.referenceId || null;\n\nconst response = {\n  success: false,\n  referenceId,\n  status: 'Payment link generation failed',\n  data: { stage: 'link_generation', error: { code: mapped.code, category: mapped.category, retryable: mapped.retryable, message: mapped.message } }\n};\n\nconst message = ':rotating_light: *Payment Link Generation Failed*\\n' +\n  '*Reference ID:* ' + referenceId + '\\n' +\n  '*Stage:* link_generation\\n' +\n  '*Code:* ' + mapped.code + ' (' + mapped.category + ', retryable: ' + mapped.retryable + ')\\n' +\n  '*Details:* ' + u3.message;\n\nreturn [{ json: { response, message } }];"
+      }
+    },
+    {
+      "id": "4c7ca274-7896-4870-9b8d-0197c01657b2",
+      "name": "Build Update Failed Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6688,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const errorMap = {\n  not_retryable: { code: 'GATEWAY_REJECTED', category: 'upstream_error', retryable: false, message: 'The payment gateway rejected the request. This will not succeed on retry; please review the submitted details.' },\n  malformed_response: { code: 'GATEWAY_CONTRACT_VIOLATION', category: 'upstream_error', retryable: false, message: 'The payment gateway returned an unexpected response. Please contact support.' },\n  retries_exhausted_connection: { code: 'GATEWAY_TIMEOUT', category: 'upstream_error', retryable: true, message: 'The payment gateway could not be reached after multiple attempts. Please try again shortly.' },\n  retries_exhausted_gateway: { code: 'GATEWAY_UNAVAILABLE', category: 'upstream_error', retryable: true, message: 'The payment gateway is currently unavailable after multiple attempts. Please try again shortly.' },\n  contract_violation: { code: 'SUBWORKFLOW_CONTRACT_VIOLATION', category: 'internal_error', retryable: false, message: 'An internal error occurred while processing this request. Please contact support.' }\n};\nconst u4 = $('Normalize U4 Result').first().json;\nconst mapped = errorMap[u4.reason] || { code: 'GATEWAY_ERROR', category: 'upstream_error', retryable: false, message: 'The payment gateway returned an error.' };\nconst referenceId = $('Validate Input').first().json.referenceId || null;\nconst paymentLink = $('Build U4 Input').first().json.payment_link;\n\nconst response = {\n  success: false,\n  referenceId,\n  status: 'Payment record update failed',\n  data: { stage: 'record_update', payment_link: paymentLink, error: { code: mapped.code, category: mapped.category, retryable: mapped.retryable, message: mapped.message } }\n};\n\nconst message = ':rotating_light: *Payment Record Update Failed*\\n' +\n  '*Reference ID:* ' + referenceId + '\\n' +\n  '*Stage:* record_update\\n' +\n  '*Payment Link:* ' + paymentLink + '\\n' +\n  '*Code:* ' + mapped.code + ' (' + mapped.category + ', retryable: ' + mapped.retryable + ')\\n' +\n  '*Details:* ' + u4.message;\n\nreturn [{ json: { response, message } }];"
+      }
+    },
+    {
+      "id": "d3f3575b-90ab-4c11-8880-1d02ffdd8f58",
+      "name": "Build Unexpected Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        1152
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "let referenceId = null;\ntry {\n  if ($('Validate Input').isExecuted) {\n    referenceId = $('Validate Input').first().json.referenceId || null;\n  }\n} catch (e) {}\nreturn [{ json: {\n  success: false,\n  referenceId,\n  status: 'An unexpected error occurred',\n  data: { stage: 'unknown', error: { code: 'UNEXPECTED_ERROR', category: 'internal_error', retryable: false, message: 'An unexpected internal error occurred while processing this request.' } }\n} }];"
+      }
+    },
+    {
+      "id": "25c02519-2086-45c0-807c-4f25fa1f016b",
+      "name": "Build Notify Failure Input - Unexpected Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        1152
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const built = $json;\nconst text = ':rotating_light: *Unexpected Internal Error*\\n' +\n  '*Reference ID:* ' + (built.referenceId || 'unknown') + '\\n' +\n  '*Details:* ' + built.data.error.message;\nreturn [{ json: { message: text } }];"
+      }
+    },
+    {
+      "id": "3f3f47b6-ca94-48b7-a645-f160a23e8ce0",
+      "name": "Call Notify Failure - Unexpected Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1760,
+        1152
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "X1Mh5io0qqtqknM8"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "bd3d8096-86ff-48e1-988a-f139ef73dd5b",
+      "name": "Respond Unexpected Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2048,
+        1152
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Build Unexpected Error Response').first().json }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "2e3b9fd4-1dd0-4cf2-9f7d-c9316421d82b",
+      "name": "Build Validation Failed Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const v = $('Validate Input').first().json;\nconst referenceId = v.referenceId || null;\n\nconst response = {\n  success: false,\n  referenceId,\n  status: 'Validation failed',\n  data: {\n    stage: 'validation',\n    error: { code: 'VALIDATION_ERROR', category: 'client_error', retryable: false, message: 'One or more fields failed validation' },\n    fields: v.errors\n  }\n};\n\nconst fieldsList = v.errors.map(f => '  \u2022 ' + f.field + ': ' + f.reason).join('\\n');\nconst message = ':rotating_light: *Validation Failed*\\n' +\n  '*Reference ID:* ' + (referenceId || 'unknown') + '\\n' +\n  '*Fields:*\\n' + fieldsList;\n\nreturn [{ json: { response, message } }];"
+      }
+    },
+    {
+      "id": "60f80325-78ca-4e5d-90e6-e34303a1f506",
+      "name": "Call Notify Failure - Validation Failed",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1680,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "X1Mh5io0qqtqknM8"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "parameters": {
+        "content": "Validation & Dedup",
+        "height": 112,
+        "width": 1904
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        288,
+        -416
+      ],
+      "typeVersion": 1,
+      "id": "ace690cb-5056-4c93-8f8a-a34787c6edb5",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Payment Link Generation",
+        "height": 112,
+        "width": 2160,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2688,
+        -416
+      ],
+      "typeVersion": 1,
+      "id": "b8624df2-57d6-4def-aa04-e11b877819d3",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Update Payment Record",
+        "height": 112,
+        "width": 2160,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        5200,
+        -416
+      ],
+      "typeVersion": 1,
+      "id": "bcb3c8cf-a680-426f-b495-03faaad65cd1",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "Shared Errors",
+        "height": 80,
+        "width": 1024,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1184,
+        752
+      ],
+      "typeVersion": 1,
+      "id": "d8dc474e-9357-4f74-816f-09a9b8bfe784",
+      "name": "Sticky Note3"
+    }
+  ],
+  "connections": {
+    "Payment Request Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Dedup Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Validation Failure Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Validation Failure Row": {
+      "main": [
+        [
+          {
+            "node": "Log Validation Failure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Validation Failure": {
+      "main": [
+        [
+          {
+            "node": "Build Validation Failed Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sheets Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup Lookup": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sheets Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Is Update Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Received Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Update Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Respond Duplicate Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build U4 Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Received Row": {
+      "main": [
+        [
+          {
+            "node": "Log Received Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Received Row": {
+      "main": [
+        [
+          {
+            "node": "Build U3 Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sheets Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build U3 Input": {
+      "main": [
+        [
+          {
+            "node": "Call Generate Payment Link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Generate Payment Link": {
+      "main": [
+        [
+          {
+            "node": "Normalize U3 Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize U3 Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize U3 Result": {
+      "main": [
+        [
+          {
+            "node": "U3 Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "U3 Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Format Link Generated Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Link Failed Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Link Failed Row": {
+      "main": [
+        [
+          {
+            "node": "Update Row - Link Failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Row - Link Failed": {
+      "main": [
+        [
+          {
+            "node": "Build Link Failed Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sheets Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Notify Failure - Link Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond Link Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Link Failed Response": {
+      "main": [
+        [
+          {
+            "node": "Call Notify Failure - Link Failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Link Generated Row": {
+      "main": [
+        [
+          {
+            "node": "Update Row - Link Generated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Row - Link Generated": {
+      "main": [
+        [
+          {
+            "node": "Build U4 Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sheets Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build U4 Input": {
+      "main": [
+        [
+          {
+            "node": "Call Update Payment Record",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Update Payment Record": {
+      "main": [
+        [
+          {
+            "node": "Normalize U4 Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize U4 Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize U4 Result": {
+      "main": [
+        [
+          {
+            "node": "U4 Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "U4 Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Format Update Confirmed Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Update Unrecoverable Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Update Unrecoverable Row": {
+      "main": [
+        [
+          {
+            "node": "Update Row - Update Unrecoverable",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Row - Update Unrecoverable": {
+      "main": [
+        [
+          {
+            "node": "Build Update Failed Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sheets Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Notify Failure - Update Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond Update Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Update Failed Response": {
+      "main": [
+        [
+          {
+            "node": "Call Notify Failure - Update Failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Update Confirmed Row": {
+      "main": [
+        [
+          {
+            "node": "Update Row - Update Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Row - Update Confirmed": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sheets Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Unexpected Error Response": {
+      "main": [
+        [
+          {
+            "node": "Build Notify Failure Input - Unexpected Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notify Failure Input - Unexpected Error": {
+      "main": [
+        [
+          {
+            "node": "Call Notify Failure - Unexpected Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Notify Failure - Unexpected Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Unexpected Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sheets Error Response": {
+      "main": [
+        [
+          {
+            "node": "Call Notify Failure - Sheets Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Notify Failure - Sheets Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Sheets Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Validation Failed Response": {
+      "main": [
+        [
+          {
+            "node": "Call Notify Failure - Validation Failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Unexpected Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Notify Failure - Validation Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond Validation Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
