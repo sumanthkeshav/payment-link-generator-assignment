@@ -1,5 +1,7 @@
 # Payment Link Generation Workflow — Plan
 
+*This reflects the plan as originally scoped, including one feature (the confirmation email) later cut during the build. See `README.md` for what was actually delivered.*
+
 ## Overview
 
 A modular n8n workflow receives a payment request via webhook, generates a payment link through a mock Payment Link API, and updates the payment record through a dedicated sub-workflow — with conditional retry handling, deduplication by `referenceId`, and a full audit trail in Google Sheets. As a bonus, once the update is confirmed the workflow emails the customer their payment link, and pushes a Slack alert on unrecoverable failures.

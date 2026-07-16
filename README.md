@@ -167,6 +167,8 @@ payment-link-generator-assignment/
 | `description` | No | string | |
 | `expireBy` | No | number | Unix timestamp; must be in the future and no more than 3 years out. Defaults to 7 days if omitted |
 
+`expireBy` isn't part of the assignment's own documented request shape — it's this workflow's own addition, letting a caller override the default 7-day link expiry.
+
 A request missing any required field, or with a malformed optional field, fails validation immediately with no retry.
 
 ---
@@ -236,6 +238,7 @@ More scenarios (validation errors, duplicate handling, gateway failures, malform
 - **`payment_link` is relayed to the customer with only a field-presence check**, not a URL-shape/domain validation.
 - **Free-text fields (`customerName`, `description`) are only presence/shape-checked, not sanitized** — a leading `=`/`+`/`-`/`@` could trigger spreadsheet formula execution if the audit Sheet is opened in Excel/Sheets.
 - **The audit Sheet's access/retention policy is undocumented** beyond "same Google account access as this n8n instance." No stated sharing boundary or deletion policy for the customer PII it accumulates.
+- **The crash catch-all relies on every node setting `onError: continueErrorOutput` by hand.** n8n has no native try/catch, so this is the best available pattern, but it's convention-enforced rather than structural — a node added later without it would hard-fail with no webhook response instead of routing to the catch-all.
 - **No secrets are hardcoded** in any node parameter — API tokens, the webhook shared secret, and OAuth credentials are all n8n-managed; the one exception (Slack's webhook URL) is an environment variable, never a hardcoded value.
 
 ---
