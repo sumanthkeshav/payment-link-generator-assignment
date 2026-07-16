@@ -1,0 +1,297 @@
+{
+  "name": "Update Payment Record",
+  "nodes": [
+    {
+      "id": "ffa9e375-6d12-4d0d-874a-8db4e16ede4e",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "payment_link", "type": "string" },
+            { "name": "ID", "type": "string" },
+            { "name": "referenceId", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d6692ed8-1250-4f9f-aa62-98731374f740",
+      "name": "Init Attempts",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, 0],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "attempts", "type": "number", "value": 1 }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ac356829-74a7-4a1c-86d3-e88bc894250c",
+      "name": "Call Update API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [560, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "https://update-payment-details.free.beeceptor.com",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { payment_link: $('When Called').item.json.payment_link, ID: $('When Called').item.json.ID, referenceId: $('When Called').item.json.referenceId } }}",
+        "options": {
+          "timeout": 10000,
+          "response": { "response": { "fullResponse": true, "neverError": true } }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": { "id": "dJn8fxpdNyp2ewU5", "name": "Update API - Header Auth" }
+      }
+    },
+    {
+      "id": "ab975fdf-0e42-45ff-a2a3-3246d5697544",
+      "name": "Is 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [840, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.statusCode }}", "rightValue": 200, "operator": { "type": "number", "operation": "gte" } },
+            { "id": "c2", "leftValue": "={{ $json.statusCode }}", "rightValue": 300, "operator": { "type": "number", "operation": "lt" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "7eec7989-75bf-4fe5-8d67-99650f7a104d",
+      "name": "Is 5xx or 429?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1120, 280],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "combinator": "or",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.statusCode }}", "rightValue": 500, "operator": { "type": "number", "operation": "gte" } },
+            { "id": "c2", "leftValue": "={{ $json.statusCode }}", "rightValue": 429, "operator": { "type": "number", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b947b52f-6d8b-49c3-87e5-570e59b29a2c",
+      "name": "Extract & Check Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, -120],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForEachItem",
+        "jsCode": "const body = $json.body || {};\nconst data = body.data || body;\nconst payment_link = data.payment_link || null;\nconst ID = data.ID || null;\nconst referenceId = $('When Called').item.json.referenceId;\nconst isValidShape = !!(payment_link && ID);\nreturn {\n  isValidShape,\n  payment_link,\n  ID,\n  referenceId,\n  statusCode: $json.statusCode\n};"
+      }
+    },
+    {
+      "id": "9a77d586-71b2-4add-9feb-23967443c6e1",
+      "name": "Shape Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1400, -120],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.isValidShape }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e044f544-1c94-4a84-ab9e-6f7ec1479904",
+      "name": "Format Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1680, -240],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "s1", "name": "success", "type": "boolean", "value": true },
+            { "id": "s2", "name": "data", "type": "object", "value": "={{ { payment_link: $json.payment_link, ID: $json.ID, referenceId: $json.referenceId } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a5f290f1-1531-4ff0-99b0-4493f72a7b78",
+      "name": "Format Failure - Malformed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1680, 0],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "success", "type": "boolean", "value": false },
+            { "id": "f2", "name": "error", "type": "object", "value": "={{ { retryable: false, reason: 'not_retryable', message: 'Update API returned status ' + $json.statusCode + ' but response is missing required fields (payment_link/ID)' } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "7cc54f83-5479-45bf-9c61-9f76f0288540",
+      "name": "Format Failure - Not Retryable",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1400, 280],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "success", "type": "boolean", "value": false },
+            { "id": "f2", "name": "error", "type": "object", "value": "={{ { retryable: false, reason: 'not_retryable', message: 'Update API returned status ' + $json.statusCode + ' (non-retryable): ' + JSON.stringify($json.body || $json.data || {}) } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "29ce4655-6d00-40d4-b6a7-9af86ed444ef",
+      "name": "Attempts Remaining?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [560, 560],
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.attemptsRemaining }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "690cca26-3cf5-42c4-a446-a3bc404ff7af",
+      "name": "Increment Attempts",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, 560],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "attempts", "type": "number", "value": "={{ $json.attempts + 1 }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c8cf2ff4-e588-468f-a9b4-3833b9bc781b",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [0, 560],
+      "parameters": { "resume": "timeInterval", "amount": 2, "unit": "seconds" }
+    },
+    {
+      "id": "f1f5f49b-976e-4226-9eaf-7014bb053761",
+      "name": "Format Failure - Retries Exhausted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [560, 800],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "success", "type": "boolean", "value": false },
+            { "id": "f2", "name": "error", "type": "object", "value": "={{ { retryable: false, reason: ($json.statusCode ? 'retries_exhausted_gateway' : 'retries_exhausted_connection'), message: 'Update API failed after ' + $json.attempts + ' attempts: ' + ($json.statusCode ? ('HTTP ' + $json.statusCode) : ($json.connectionErrorMessage || 'connection error')) } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "7527db9e-9d94-43f9-9b34-d29a2197d688",
+      "name": "Normalize Attempts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 560],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForEachItem",
+        "jsCode": "let attempts = $json.attempts;\nif (attempts === undefined) {\n  attempts = $('Increment Attempts').isExecuted ? $('Increment Attempts').item.json.attempts : $('Init Attempts').item.json.attempts;\n}\nconst statusCode = $json.statusCode;\nconst connectionErrorMessage = $json.error && $json.error.message ? $json.error.message : null;\nreturn { attempts, attemptsRemaining: attempts < 3, statusCode, connectionErrorMessage };"
+      }
+    }
+  ],
+  "connections": {
+    "When Called": { "main": [[{ "node": "Init Attempts", "type": "main", "index": 0 }]] },
+    "Init Attempts": { "main": [[{ "node": "Call Update API", "type": "main", "index": 0 }]] },
+    "Call Update API": {
+      "main": [
+        [{ "node": "Is 2xx?", "type": "main", "index": 0 }],
+        [{ "node": "Normalize Attempts", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is 2xx?": {
+      "main": [
+        [{ "node": "Extract & Check Shape", "type": "main", "index": 0 }],
+        [{ "node": "Is 5xx or 429?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is 5xx or 429?": {
+      "main": [
+        [{ "node": "Normalize Attempts", "type": "main", "index": 0 }],
+        [{ "node": "Format Failure - Not Retryable", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract & Check Shape": { "main": [[{ "node": "Shape Valid?", "type": "main", "index": 0 }]] },
+    "Shape Valid?": {
+      "main": [
+        [{ "node": "Format Success", "type": "main", "index": 0 }],
+        [{ "node": "Format Failure - Malformed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Attempts Remaining?": {
+      "main": [
+        [{ "node": "Increment Attempts", "type": "main", "index": 0 }],
+        [{ "node": "Format Failure - Retries Exhausted", "type": "main", "index": 0 }]
+      ]
+    },
+    "Increment Attempts": { "main": [[{ "node": "Wait 2s", "type": "main", "index": 0 }]] },
+    "Wait 2s": { "main": [[{ "node": "Call Update API", "type": "main", "index": 0 }]] },
+    "Normalize Attempts": { "main": [[{ "node": "Attempts Remaining?", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
