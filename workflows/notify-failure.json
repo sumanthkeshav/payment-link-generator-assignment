@@ -1,0 +1,45 @@
+{
+  "name": "Notify Failure",
+  "nodes": [
+    {
+      "id": "76216485-3087-46ed-82fa-b29ebf994aed",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "message", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "54c96f35-c73d-4946-b3a4-e5197abe7869",
+      "name": "Send Slack Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [280, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: $json.message } }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Called": { "main": [[{ "node": "Send Slack Alert", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
