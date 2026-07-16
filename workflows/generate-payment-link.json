@@ -1,0 +1,303 @@
+{
+  "name": "Generate Payment Link",
+  "nodes": [
+    {
+      "id": "385d8930-1990-4a02-9bb9-817144c7a6cc",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "referenceId", "type": "string" },
+            { "name": "paymentAmount", "type": "number" },
+            { "name": "currency", "type": "string" },
+            { "name": "description", "type": "string" },
+            { "name": "customerName", "type": "string" },
+            { "name": "customerPhone", "type": "string" },
+            { "name": "customerEmail", "type": "string" },
+            { "name": "expireBy", "type": "number" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "7527db9e-9d94-43f9-9b34-d29a2197d677",
+      "name": "Init Attempts",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, 0],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "attempts", "type": "number", "value": 1 },
+            { "id": "a2", "name": "effectiveExpireBy", "type": "number", "value": "={{ $('When Called').item.json.expireBy || (Math.floor(Date.now()/1000) + 7*24*60*60) }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ef164cef-45e3-45c1-add5-29aac6fa7365",
+      "name": "Call Payment Link API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [560, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://mp546cd608b430b4bd1c.free.beeceptor.com",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { amount: $('When Called').item.json.paymentAmount, currency: $('When Called').item.json.currency, expire_by: $('Init Attempts').item.json.effectiveExpireBy, referenceId: $('When Called').item.json.referenceId, description: $('When Called').item.json.description, customer: { name: $('When Called').item.json.customerName, contact: $('When Called').item.json.customerPhone, email: $('When Called').item.json.customerEmail }, notify: { email: true }, reminder_enable: true, notes: {} } }}",
+        "options": {
+          "timeout": 10000,
+          "response": { "response": { "fullResponse": true, "neverError": true } }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": { "id": "u8bImPt17hpgS7SF", "name": "Payment Link API - Header Auth" }
+      }
+    },
+    {
+      "id": "5e9d0ca6-a75b-4057-999c-802a88115f5b",
+      "name": "Is 2xx?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [840, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.statusCode }}", "rightValue": 200, "operator": { "type": "number", "operation": "gte" } },
+            { "id": "c2", "leftValue": "={{ $json.statusCode }}", "rightValue": 300, "operator": { "type": "number", "operation": "lt" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "22ba11f4-344c-4ad9-b1d1-96f45b066155",
+      "name": "Is 5xx or 429?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1120, 280],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "combinator": "or",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.statusCode }}", "rightValue": 500, "operator": { "type": "number", "operation": "gte" } },
+            { "id": "c2", "leftValue": "={{ $json.statusCode }}", "rightValue": 429, "operator": { "type": "number", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "6cc05c9e-0b05-4c89-86ed-90e3d5381ab6",
+      "name": "Extract & Check Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, -120],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForEachItem",
+        "jsCode": "const body = $json.body || {};\nconst data = body.data || body;\nconst payment_link = data.payment_link || null;\nconst ID = data.ID || null;\nconst referenceId = $('When Called').item.json.referenceId;\nconst isValidShape = !!(payment_link && ID);\nreturn {\n  isValidShape,\n  payment_link,\n  ID,\n  referenceId,\n  expire_by: $('Init Attempts').item.json.effectiveExpireBy,\n  statusCode: $json.statusCode\n};"
+      }
+    },
+    {
+      "id": "8b15748a-f412-4ee4-a3c3-f0efbb753a56",
+      "name": "Shape Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1400, -120],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.isValidShape }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "86de92f0-6d25-4667-ad53-8a508fbd2395",
+      "name": "Format Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1680, -240],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "s1", "name": "success", "type": "boolean", "value": true },
+            { "id": "s2", "name": "data", "type": "object", "value": "={{ { payment_link: $json.payment_link, ID: $json.ID, referenceId: $json.referenceId, expire_by: $json.expire_by } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "acd1293e-35bd-4a80-9557-56d427ced29b",
+      "name": "Format Failure - Malformed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1680, 0],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "success", "type": "boolean", "value": false },
+            { "id": "f2", "name": "error", "type": "object", "value": "={{ { retryable: false, reason: 'not_retryable', message: 'Payment Link API returned status ' + $json.statusCode + ' but response is missing required fields (payment_link/ID/referenceId)' } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "7a9770fc-9b8a-4f2f-86ae-fbedf646e84d",
+      "name": "Format Failure - Not Retryable",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1400, 280],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "success", "type": "boolean", "value": false },
+            { "id": "f2", "name": "error", "type": "object", "value": "={{ { retryable: false, reason: 'not_retryable', message: 'Payment Link API returned status ' + $json.statusCode + ' (non-retryable): ' + JSON.stringify($json.body || $json.data || {}) } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "707914f1-23c7-4b7e-91f0-678e273c3ecf",
+      "name": "Attempts Remaining?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [560, 560],
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2, "leftValue": "", "caseSensitive": true, "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.attemptsRemaining }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "50e52f20-7891-4d5f-aeae-4f4f7e024884",
+      "name": "Increment Attempts",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, 560],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "attempts", "type": "number", "value": "={{ $json.attempts + 1 }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2a7ab2b5-0d67-49c9-a20a-e5a8c882e581",
+      "name": "Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [0, 560],
+      "parameters": { "resume": "timeInterval", "amount": 2, "unit": "seconds" }
+    },
+    {
+      "id": "ed506eb6-0531-433a-84ba-53adb65e7f1d",
+      "name": "Format Failure - Retries Exhausted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [560, 800],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "success", "type": "boolean", "value": false },
+            { "id": "f2", "name": "error", "type": "object", "value": "={{ { retryable: false, reason: ($json.statusCode ? 'retries_exhausted_gateway' : 'retries_exhausted_connection'), message: 'Payment Link API failed after ' + $json.attempts + ' attempts: ' + ($json.statusCode ? ('HTTP ' + $json.statusCode) : ($json.connectionErrorMessage || 'connection error')) } }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e04f30df-cd8e-4753-b525-12d319def07c",
+      "name": "Normalize Attempts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 560],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForEachItem",
+        "jsCode": "let attempts = $json.attempts;\nif (attempts === undefined) {\n  attempts = $('Increment Attempts').isExecuted ? $('Increment Attempts').item.json.attempts : $('Init Attempts').item.json.attempts;\n}\nconst statusCode = $json.statusCode;\nconst connectionErrorMessage = $json.error && $json.error.message ? $json.error.message : null;\nreturn { attempts, attemptsRemaining: attempts < 3, statusCode, connectionErrorMessage };"
+      }
+    }
+  ],
+  "connections": {
+    "When Called": { "main": [[{ "node": "Init Attempts", "type": "main", "index": 0 }]] },
+    "Init Attempts": { "main": [[{ "node": "Call Payment Link API", "type": "main", "index": 0 }]] },
+    "Call Payment Link API": {
+      "main": [
+        [{ "node": "Is 2xx?", "type": "main", "index": 0 }],
+        [{ "node": "Normalize Attempts", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is 2xx?": {
+      "main": [
+        [{ "node": "Extract & Check Shape", "type": "main", "index": 0 }],
+        [{ "node": "Is 5xx or 429?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is 5xx or 429?": {
+      "main": [
+        [{ "node": "Normalize Attempts", "type": "main", "index": 0 }],
+        [{ "node": "Format Failure - Not Retryable", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract & Check Shape": { "main": [[{ "node": "Shape Valid?", "type": "main", "index": 0 }]] },
+    "Shape Valid?": {
+      "main": [
+        [{ "node": "Format Success", "type": "main", "index": 0 }],
+        [{ "node": "Format Failure - Malformed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Attempts Remaining?": {
+      "main": [
+        [{ "node": "Increment Attempts", "type": "main", "index": 0 }],
+        [{ "node": "Format Failure - Retries Exhausted", "type": "main", "index": 0 }]
+      ]
+    },
+    "Increment Attempts": { "main": [[{ "node": "Wait 2s", "type": "main", "index": 0 }]] },
+    "Wait 2s": { "main": [[{ "node": "Call Payment Link API", "type": "main", "index": 0 }]] },
+    "Normalize Attempts": { "main": [[{ "node": "Attempts Remaining?", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
