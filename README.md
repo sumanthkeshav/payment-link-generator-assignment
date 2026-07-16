@@ -1,5 +1,7 @@
 # Payment Link Generation Workflow
 
+[Video walkthrough](https://www.loom.com/share/8464cd365e024ae8892804a2104a0c7a)
+
 ## Overview
 
 A modular n8n workflow that receives a payment request via webhook, generates a payment link through an external Payment Link API, and updates the payment record through an external Update API — with conditional retry handling, deduplication, and a full audit trail.
